@@ -10,7 +10,10 @@ def build_model(num_classes=3, device='cpu'):
     for param in model.parameters():
         param.requires_grad = False
 
-    # Unfreeze last ResNet layer (layer4)
+    # Unfreeze last two ResNet layers
+    for param in model.layer3.parameters():
+        param.requires_grad = True
+
     for param in model.layer4.parameters():
         param.requires_grad = True
 

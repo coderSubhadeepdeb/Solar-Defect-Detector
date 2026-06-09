@@ -20,22 +20,13 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
         images = images.to(device)
         labels = labels.to(device)
 
-        # Forward pass
         outputs = model(images)
-
-        # Calculate loss
         loss = criterion(outputs, labels)
 
-        # Zero old gradients
         optimizer.zero_grad()
-
-        # Backward pass
         loss.backward()
-
-        # Update weights
         optimizer.step()
 
-        # Track accuracy
         _, predicted = outputs.max(1)
         correct += predicted.eq(labels).sum().item()
         total += labels.size(0)
@@ -43,9 +34,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
 
         loop.set_postfix(loss=loss.item(), acc=100.*correct/total)
 
-    epoch_loss = running_loss / len(loader)
-    epoch_acc = 100. * correct / total
-    return epoch_loss, epoch_acc
+    return running_loss / len(loader), 100. * correct / total
 
 
 def validate(model, loader, criterion, device):
@@ -67,13 +56,10 @@ def validate(model, loader, criterion, device):
             total += labels.size(0)
             running_loss += loss.item()
 
-    epoch_loss = running_loss / len(loader)
-    epoch_acc = 100. * correct / total
-    return epoch_loss, epoch_acc
+    return running_loss / len(loader), 100. * correct / total
 
 
-def train(num_epochs=20, batch_size=32, learning_rate=0.001):
-    # Setup
+def train(num_epochs=30, batch_size=32, learning_rate=0.0001):
     base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     data_dir = os.path.join(base, 'data')
     save_dir = os.path.join(base, 'saved_models')
@@ -81,10 +67,7 @@ def train(num_epochs=20, batch_size=32, learning_rate=0.001):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
 
-    # Get data
     train_loader, val_loader, _, classes = get_dataloaders(data_dir, batch_size)
-
-    # Build model
     model = build_model(num_classes=len(classes), device=device)
 
     # Class weights to handle imbalance
@@ -92,14 +75,16 @@ def train(num_epochs=20, batch_size=32, learning_rate=0.001):
     class_weights = 1.0 / class_counts
     class_weights = class_weights / class_weights.sum()
     class_weights = class_weights.to(device)
-
-    # Loss function with class weights
     criterion = nn.CrossEntropyLoss(weight=class_weights)
 
     # Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
-    # Track best model
+    # Scheduler with patience of 5
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.5, patience=5
+    )
+
     best_val_acc = 0.0
 
     print(f"\nStarting training for {num_epochs} epochs...\n")
@@ -107,16 +92,28 @@ def train(num_epochs=20, batch_size=32, learning_rate=0.001):
     for epoch in range(num_epochs):
         print(f"Epoch {epoch+1}/{num_epochs}")
 
-        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
-        val_loss, val_acc = validate(model, val_loader, criterion, device)
+        train_loss, train_acc = train_one_epoch(
+            model, train_loader, criterion, optimizer, device
+        )
+        val_loss, val_acc = validate(
+            model, val_loader, criterion, device
+        )
+
+        # Scheduler steps based on val loss
+        scheduler.step(val_loss)
+        current_lr = optimizer.param_groups[0]['lr']
 
         print(f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}%")
         print(f"Val Loss:   {val_loss:.4f} | Val Acc:   {val_acc:.2f}%")
+        print(f"Learning Rate: {current_lr:.6f}")
         print("-" * 50)
 
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            torch.save(model.state_dict(), os.path.join(save_dir, 'best_model.pth'))
+            torch.save(
+                model.state_dict(),
+                os.path.join(save_dir, 'best_model.pth')
+            )
             print(f"Best model saved with val accuracy: {val_acc:.2f}%\n")
 
     print(f"\nTraining complete. Best val accuracy: {best_val_acc:.2f}%")
